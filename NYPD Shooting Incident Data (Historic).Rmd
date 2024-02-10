@@ -33,6 +33,7 @@ nypd<-read.csv(url_in, stringsAsFactors = TRUE) %>%
 
 
 ### Change Columns and Convert Date type:
+
 ```{r updateCols}
 nypd <- nypd %>% 
     rename("Date" = "OCCUR_DATE" ,
