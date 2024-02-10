@@ -1,0 +1,220 @@
+---
+title: "Covid Data Analysis"
+author: "David Lord"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  html_documnet: default
+  pdf_document: default
+---
+
+
+This report will analyse the Covid data collected via John Hopkins from the years 2020 to 2023.
+
+**Problem Statement**: Demonstrate all of the skills for data analysis process by importing data, tidying it up, analyzing it, and reporting the results. 
+
+**Summary**: This breakdown includes Covid cases and deaths by states and nation over the time period of 2020 to 2023.  We will also compare the cases and deaths of the US to the global numbers. 
+
+
+```{r setup,include= FALSE}
+knitr::opts_chunk$set(fig.width=14,fig.height=8,echo = TRUE)
+#Load necessary libraries
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(reshape2)
+
+#Set scipen to 999 to turn off scientifc notation
+options(scipen=999)
+```
+
+## Set up data connections to Github
+
+```{r get_jhu_data}
+## Get Current Data in four files
+# they all start with the url: "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+url_root<-"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+filenames<-c("time_series_covid19_confirmed_global.csv","time_series_covid19_deaths_global.csv","time_series_covid19_confirmed_US.csv","time_series_covid19_deaths_US.csv")
+urls<-str_c(url_root,filenames)
+
+#CSV for population
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+```
+
+## Read in Data and see what we have:
+```{r import_data,message=FALSE}
+global_cases<-read_csv(urls[1])
+head(global_cases)
+global_deaths<-read_csv(urls[2])
+head(global_deaths)
+US_cases<-read_csv(urls[3])
+head(US_cases)
+US_deaths<-read_csv(urls[4])
+head(US_deaths)
+uid<- read_csv(uid_lookup_url)%>%
+  select(-c(Lat,Long_, Combined_Key, code3, iso2, iso3, Admin2))
+head(uid)
+```
+
+For the Global and US cases, the dates are columns and we will need to pivot them to rows and rename it as date.  We will remove Latitude and Longitude since our focus will be on the number of cases and deaths from Covid over time instead of per country.  We will also remove the iso's code3.  We will use the UID to look up and add the populations for each region. 
+
+## Tidy Up Global Data:
+```{r tidy_global_data}
+global_cases<- global_cases %>%
+     pivot_longer(#pivot_longer makes cols into rows
+       #Next we will make everything into a row except
+       #Province/State,Country/Region, Lat, Long
+       cols = -c(`Province/State`, 
+                   `Country/Region`, Lat, Long),
+                   names_to="date",
+                   values_to ="cases")%>%
+                      select(-c(Lat,Long)) #Select everything but Lat/Long
+
+global_deaths<- global_deaths %>%
+     pivot_longer(#pivot_longer makes cols into rows
+         #Next we will make everything into a row except
+         #Province/State,Country/Region, Lat, Long
+         cols = -c(`Province/State`, 
+                   `Country/Region`, Lat, Long),
+         names_to="date",
+         values_to ="deaths")%>%
+     select(-c(Lat,Long)) #Select everything but Lat/Long
+
+global <- global_cases %>%
+ full_join(global_deaths) %>%
+ rename(Country_Region = `Country/Region`,
+        Province_State=`Province/State`)%>%
+  mutate(date=mdy(date))
+
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region),
+        sep =",",
+        na.rm=TRUE,
+        remove=FALSE)
+
+global<-global %>%
+  left_join(uid,by =c("Province_State", "Country_Region")) %>%
+  select(-c(UID,FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+
+```
+
+## Tidy Up US Data:
+```{r tidy_US_data}
+US_cases <- US_cases %>%
+  pivot_longer(cols=-(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases")%>%
+  select(Admin2:cases) %>%
+  mutate(date=mdy(date)) %>%
+  select(-c(Lat,Long_))
+
+US_deaths <- US_deaths %>%
+     pivot_longer(cols=-(UID:Population),
+                  names_to = "date",
+                  values_to = "deaths")%>%
+     select(Admin2:deaths) %>%
+     mutate(date=mdy(date)) %>%
+     select(-c(Lat,Long_))
+
+US <- US_cases  %>%
+ full_join(US_deaths)
+
+
+```
+
+## Summary of the Data:
+A quick summary shows the data is from January 22nd 2020 to March 9th 2023. 
+```{r summary}
+summary(global)
+summary(US)
+```
+
+## Visualizations
+
+To best see how the cases and deaths from Covid, I found the totals of each day and graphed them over time. 
+```{r US_vis_1}
+#df3 <- mutate (US_cases, year=as.POSIXlt(date)$year + 1900)
+#Convert the datatype of YEAR from chr to int
+#df3$YEAR <- type.convert(df3$YEAR, as.is = TRUE)
+#filter(US,US$Province_State=='Alabama',US$date=='2020-03-11',US$cases>0)
+
+#Testing
+# df <- data.frame(time = 1:10,
+#                  a = cumsum(rnorm(10)),
+#                  b = cumsum(rnorm(10)),
+#                  c = cumsum(rnorm(10)))
+# df <- melt(df ,  id.vars = 'time', variable.name = 'series')
+# ggplot(df, aes(time,value)) + geom_line(aes(colour = series))
+
+#sum_cases = aggregate(cases ~ date, grouped_by_date_df, sum)$cases
+
+US_totals <- US %>%
+           group_by(date) %>%
+           summarise('Total Cases' = sum(cases),
+                     'Total Deaths' = sum(deaths))
+US_totals <- melt(US_totals, id.vars='date', variable.name = 'series')
+ggplot(US_totals,aes(date,value)) + geom_line(aes(colour=series))+ labs(title="US Covid Cases and Deaths", x= "Date" , y = "Number")
+```
+
+To look at it from state level, I found the totals for each state and compared the cases vs the deaths.  I initially had them on the same graph, but since the deaths were about 1% of, it was difficult to see.   By separating it we can see that for most states, the deaths and cases follow similar patterns.   States that seemed to extra deaths are Texas, Tennessee, Pennsylvania, Ohio, New York, New Jersey, Nevada, Michigan, Georgia, Florida, Arizona, and Alabama.
+
+```{r US_vis_2}
+State_totals_by_day <- US %>%
+           group_by(Province_State,date) %>%
+           summarise('Daily Cases' = sum(cases),
+                     'Daily Deaths' = sum(deaths))%>%
+  ungroup()
+
+state_cases<-aggregate(State_totals_by_day$`Daily Cases`, list(State_totals_by_day$Province_State), function(x) max(x))
+
+state_deaths<-aggregate(State_totals_by_day$`Daily Deaths`, list(State_totals_by_day$Province_State), function(x) max(x))
+
+state_cases<-rename(state_cases,'cases'='x')
+
+state_deaths<-rename(state_deaths,'deaths'='x')
+
+state<-left_join(state_cases,state_deaths)
+
+state<-rename(state, 'state'='Group.1')
+
+state <- melt(state, id.vars='state', variable.name = 'series')
+          
+ggplot(state,aes(state,value)) + geom_bar(show.legend=F,stat="identity",aes(colour=series))+ coord_flip()+
+  facet_wrap(~series, scales="free")+labs(title="US States Covid Cases and Deaths", x= "State" , y = "Number")
+```
+
+On a global scale, Covid cases and deaths continue to rise as is the case with the US. 
+
+```{r global_vis_1}
+global_totals <- global %>%
+           group_by(date) %>%
+           summarise('Total Cases' = sum(cases),
+                     'Total Deaths' = sum(deaths))
+global_totals <- melt(global_totals, id.vars='date', variable.name = 'series')
+ggplot(global_totals,aes(date,value)) + geom_line(aes(colour=series))+ labs(title="World Covid Cases and Deaths", x= "Date" , y = "Number")
+
+
+```
+
+That leads to the question, "How does the US compare to the rest of the world?"
+The data suggests that the rate of cases and deaths are both lower compared to the world and that could be contributed to public policy, public health, and vaccinations.  As vaccines become more available worldwide, it should slow down the global rate of cases and deaths. 
+```{r global_vs_US_vis_1}
+ggplot(global_totals, aes(date, value,color='Global')) + 
+   geom_point() + 
+   geom_point(data = US_totals, aes(color='US'))+facet_wrap(~series, scales="free")+labs(title="Global vs US Covid Cases and Deaths", x= "Time" , y = "Number")
+```
+
+
+
+
+
+## Sources of Bias
+
+While the data was collected daily from multiple data points, there are some concerns to be aware of.   There are reports that some hospitals and countries overreported and underreported the number of covid cases and deaths:Sources [Underreporting Covid Cases and Deaths](https://www.journalpulmonology.org/en-evaluating-massive-underreporting-undertesting-covid-19-articulo-S253104372030129X) and [Overreporting Covid deaths](https://www.medicalnewstoday.com/articles/how-are-covid-19-deaths-counted-and-what-does-this-mean).   So while the data is likely a good representation of covid cases and deaths, it does not necessarily show the true value of cases and deaths. Further data sources should be collected to improve the model.  Another source of bias is that the data is reported by hospitals, and it would miss people who do not visit the hospital.  This affects people from rural areas and those without medical care, so the data is probably lower than the true value.  
+
+
+
+
